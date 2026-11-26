@@ -1,0 +1,88 @@
+{
+  "uid": "fraudflow-pipelines",
+  "title": "FraudFlow – Santé des pipelines",
+  "tags": ["fraudflow"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-3h", "to": "now"},
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Minutes depuis le dernier lot reçu",
+      "description": "Au-delà de 10 minutes, une alerte se déclenche : le flux est probablement arrêté.",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT round((EXTRACT(EPOCH FROM now() - max(recorded_at)) / 60)::numeric, 1) AS minutes FROM ops.streaming_metrics WHERE query_name = 'bronze'"}],
+      "fieldConfig": {"defaults": {"unit": "m", "thresholds": {"mode": "absolute", "steps": [
+        {"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 10}]}}, "overrides": []},
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Transactions reçues sur la dernière heure",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT COALESCE(sum(input_rows), 0) AS transactions FROM ops.streaming_metrics WHERE query_name = 'bronze' AND recorded_at > now() - interval '1 hour'"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Taux de quarantaine du dernier jour chargé",
+      "description": "Au-dessus de 5 %, le DAG s'arrête avant dbt : les tables métier ne sont pas mises à jour.",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT quarantine_rate * 100 AS quarantaine FROM ops.lake_daily ORDER BY day DESC LIMIT 1"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [
+        {"color": "green", "value": null}, {"color": "red", "value": 5}]}}, "overrides": []},
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Dernière exécution du DAG quotidien",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT status FROM ops.pipeline_runs ORDER BY finished_at DESC LIMIT 1"}],
+      "fieldConfig": {"defaults": {"mappings": [
+        {"type": "value", "options": {"success": {"color": "green", "text": "Succès"}}},
+        {"type": "regex", "options": {"pattern": "failed.*", "result": {"color": "red", "text": "Échec"}}}]}, "overrides": []},
+      "options": {"colorMode": "background", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "/.*/"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Débit : lignes lues par minute, par traitement",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT date_trunc('minute', recorded_at) AS time, query_name AS metric, sum(input_rows) AS value FROM ops.streaming_metrics WHERE $__timeFilter(recorded_at) GROUP BY 1, 2 ORDER BY 1"}],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Durée des micro-batchs",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT date_trunc('minute', recorded_at) AS time, query_name AS metric, avg(duration_ms) AS value FROM ops.streaming_metrics WHERE $__timeFilter(recorded_at) GROUP BY 1, 2 ORDER BY 1"}],
+      "fieldConfig": {"defaults": {"unit": "ms", "custom": {"drawStyle": "line", "lineWidth": 2}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "type": "table",
+      "title": "Exécutions du DAG quotidien",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 13},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT logical_date AS \"journée\", status AS \"statut\", ingested_rows AS \"lignes\", quarantined_rows AS \"en quarantaine\", round(quarantine_rate * 100, 2) AS \"quarantaine %\", alerts AS \"alertes\", finished_at AS \"terminé à\" FROM ops.pipeline_runs ORDER BY finished_at DESC LIMIT 20"}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true}
+    }
+  ]
+}

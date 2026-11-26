@@ -1,0 +1,5 @@
+merchant_id,name,mcc,category,country,is_risky,loaded_at
+M0001,Carrefour Exemple,5411,Supermarché,FR,false,2026-11-08 06:00:00+00
+M0002,Boutique en ligne Exemple,5732,Électronique,FR,false,2026-11-08 06:00:00+00
+M0003,Casino en ligne Exemple,7995,Jeux d'argent,MA,true,2026-11-08 06:00:00+00
+M0004,Diner Exemple,5812,Restaurant,US,false,2026-11-08 06:00:00+00

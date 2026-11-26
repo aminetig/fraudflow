@@ -1,0 +1,41 @@
+version: 2
+
+# Types explicites : sans eux, dbt devinerait les types à partir du contenu des fichiers
+seeds:
+  - name: customers
+    config:
+      column_types:
+        avg_amount_eur: numeric(10, 2)
+        loaded_at: timestamptz
+  - name: merchants
+    config:
+      column_types:
+        mcc: char(4)
+        is_risky: boolean
+        loaded_at: timestamptz
+  - name: transactions
+    config:
+      column_types:
+        amount: numeric(14, 2)
+        amount_eur: numeric(14, 2)
+        mcc: char(4)
+        event_time: timestamptz
+        event_date: date
+        _injected_fraud: text
+        kafka_partition: integer
+        kafka_offset: bigint
+        ingested_at: timestamptz
+        loaded_at: timestamptz
+  - name: alerts
+    config:
+      column_types:
+        transaction_id: text
+        score: integer
+        first_event_time: timestamptz
+        last_event_time: timestamptz
+        window_start: timestamptz
+        window_end: timestamptz
+        evidence: jsonb
+        detected_at: timestamptz
+        alert_date: date
+        loaded_at: timestamptz

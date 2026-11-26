@@ -1,0 +1,4 @@
+alert_id,rule,card_hash,card_last4,customer_id,transaction_id,score,level,first_event_time,last_event_time,window_start,window_end,evidence,detected_at,alert_date,loaded_at
+alert-1,R2_AMOUNT_SPIKE,hash-a,7950,C00001,t-002,97,HIGH,2026-11-07 10:00:00+00,2026-11-07 10:00:00+00,,,"{""ratio"": 22.3}",2026-11-07 10:00:08+00,2026-11-07,2026-11-08 02:00:00+00
+alert-2,R3_IMPOSSIBLE_TRAVEL,hash-b,1234,C00002,,75,HIGH,2026-11-07 11:00:00+00,2026-11-07 11:04:00+00,2026-11-07 10:35:00+00,2026-11-07 11:05:00+00,"{""countries"": [""FR"", ""US""]}",2026-11-07 11:04:09+00,2026-11-07,2026-11-08 02:00:00+00
+alert-3,R4_RISKY_NIGHT,hash-c,5678,C00003,t-005,56,MEDIUM,2026-11-07 01:30:00+00,2026-11-07 01:30:00+00,,,"{""local_hour"": 2}",2026-11-07 01:30:07+00,2026-11-07,2026-11-08 02:00:00+00

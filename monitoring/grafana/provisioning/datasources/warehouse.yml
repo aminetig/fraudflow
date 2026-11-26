@@ -1,0 +1,16 @@
+# Source de données créée au démarrage de Grafana : l'entrepôt PostgreSQL
+apiVersion: 1
+datasources:
+  - name: Entrepôt
+    uid: warehouse
+    type: grafana-postgresql-datasource
+    url: postgres:5432
+    user: ${POSTGRES_USER}
+    secureJsonData:
+      password: ${POSTGRES_PASSWORD}
+    jsonData:
+      database: warehouse
+      sslmode: disable
+      postgresVersion: 1700
+    isDefault: true
+    editable: false

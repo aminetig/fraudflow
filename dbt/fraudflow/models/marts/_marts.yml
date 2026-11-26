@@ -1,0 +1,100 @@
+version: 2
+
+models:
+  - name: fct_transactions
+    description: Table de faits du modèle en étoile, une ligne par transaction, avec les alertes qui la couvrent.
+    columns:
+      - name: transaction_id
+        description: Identifiant unique de la transaction.
+        data_tests: [unique, not_null]
+      - name: card_hash
+        description: Empreinte de la carte.
+        config:
+          meta: {pii: true}
+      - name: card_last4
+        description: Quatre derniers chiffres de la carte.
+        config:
+          meta: {pii: true}
+      - name: customer_id
+        description: Clé vers dim_customers.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: merchant_id
+        description: Clé vers dim_merchants.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_merchants')
+                field: merchant_id
+      - name: is_foreign
+        description: Le commerçant n'est pas dans le pays de résidence du client.
+      - name: alert_count
+        description: Nombre d'alertes qui couvrent la transaction.
+      - name: is_alerted
+        description: Au moins une alerte couvre la transaction.
+      - name: max_alert_score
+        description: Score le plus élevé parmi ces alertes.
+      - name: alert_rules
+        description: Règles déclenchées, séparées par des virgules.
+
+  - name: dim_customers
+    description: Dimension client, avec l'activité observée.
+    columns:
+      - name: customer_id
+        description: Identifiant du client.
+        data_tests: [unique, not_null]
+      - name: full_name
+        description: Nom complet.
+        config:
+          meta: {pii: true}
+      - name: email
+        description: Adresse e-mail.
+        config:
+          meta: {pii: true}
+
+  - name: dim_merchants
+    description: Dimension commerçant, avec l'activité observée.
+    columns:
+      - name: merchant_id
+        description: Identifiant du commerçant.
+        data_tests: [unique, not_null]
+
+  - name: mart_fraud_daily
+    description: Volumes, montants et alertes par jour, canal et pays du commerçant.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [event_date, channel, merchant_country]
+    columns:
+      - name: amount_at_risk_eur
+        description: Montant des transactions couvertes par une alerte.
+      - name: alert_rate
+        description: Part des transactions couvertes par une alerte.
+
+  - name: mart_merchant_risk
+    description: Commerçants ayant au moins une transaction signalée, classés du plus au moins signalé.
+    columns:
+      - name: merchant_id
+        description: Identifiant du commerçant.
+        data_tests: [unique, not_null]
+      - name: risk_rank
+        description: Rang dans le classement, 1 pour le plus signalé.
+
+  - name: mart_card_risk_daily
+    description: Score combiné par carte et par jour, à partir de toutes les règles déclenchées.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [card_hash, alert_date]
+    columns:
+      - name: card_hash
+        description: Empreinte de la carte.
+        config:
+          meta: {pii: true}
+      - name: combined_score
+        description: Somme des scores des alertes du jour, plafonnée à 100.
+      - name: combined_level
+        description: Niveau correspondant au score combiné.

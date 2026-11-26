@@ -1,0 +1,48 @@
+# Alerte : plus aucune donnée n'arrive dans le data lake depuis 10 minutes.
+# Le générateur, Kafka ou Spark est probablement arrêté : voir docs/runbook.md.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: fraudflow
+    folder: FraudFlow
+    interval: 1m
+    rules:
+      - uid: fraudflow-no-new-data
+        title: Aucune nouvelle donnée depuis 10 minutes
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: warehouse
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT COALESCE(EXTRACT(EPOCH FROM now() - max(recorded_at)) / 60, 9999)
+                  AS minutes_since_last_batch
+                FROM ops.streaming_metrics WHERE query_name = 'bronze'
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [10]}
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Le data lake ne reçoit plus de transactions depuis plus de 10 minutes.
+          description: Vérifier le générateur, Kafka et Spark (make ps, make logs). Voir docs/runbook.md.

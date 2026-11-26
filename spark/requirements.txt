@@ -1,0 +1,4 @@
+pyspark==3.5.9
+pycountry==26.2.16
+pymongo==4.19.0
+psycopg[binary]==3.3.8

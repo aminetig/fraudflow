@@ -1,0 +1,21 @@
+# Secrets : mots de passe et clés restent sur la machine, jamais dans Git
+.env
+
+# Python : fichiers générés automatiquement, recréés à chaque exécution
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Éditeurs et systèmes : propres à chaque poste, inutiles aux autres
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# dbt : fichiers générés
+dbt/fraudflow/target/
+dbt/fraudflow/dbt_packages/
+dbt/fraudflow/logs/
+dbt/fraudflow/package-lock.yml

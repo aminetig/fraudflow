@@ -1,0 +1,146 @@
+version: 2
+
+models:
+  - name: stg_transactions
+    description: Transactions par carte validées, une ligne par transaction.
+    columns:
+      - name: transaction_id
+        description: Identifiant unique de la transaction (UUID), attribué par le système de paiement.
+        data_tests: [unique, not_null]
+      - name: card_hash
+        description: Empreinte SHA-256 salée du numéro de carte. Permet de regrouper par carte sans connaître le numéro.
+        config:
+          meta: {pii: true}
+        data_tests: [not_null]
+      - name: card_last4
+        description: Quatre derniers chiffres de la carte, seule partie du numéro qu'on a le droit de garder.
+        config:
+          meta: {pii: true}
+      - name: customer_id
+        description: Client titulaire de la carte.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: merchant_id
+        description: Commerçant qui a reçu le paiement.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_merchants')
+                field: merchant_id
+      - name: amount
+        description: Montant dans la devise du commerçant.
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> 0"
+      - name: currency
+        description: Devise du paiement (code ISO 4217).
+      - name: amount_eur
+        description: Montant converti en euros, avec des taux fixes fictifs.
+      - name: merchant_country
+        description: Pays du commerçant (code ISO 3166-1).
+      - name: channel
+        description: "Canal de paiement : POS (magasin), ECOM (en ligne) ou ATM (distributeur)."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [POS, ECOM, ATM]
+      - name: mcc
+        description: Catégorie du commerçant (Merchant Category Code, norme ISO 18245).
+      - name: event_time
+        description: Date et heure du paiement, en UTC.
+        data_tests: [not_null]
+      - name: event_date
+        description: Jour du paiement, en UTC.
+      - name: injected_fraud
+        description: Vérité terrain du simulateur (nom du scénario de fraude injecté). Ne sert qu'à évaluer la détection.
+      - name: loaded_at
+        description: Heure de chargement dans l'entrepôt.
+
+  - name: stg_alerts
+    description: Alertes de fraude émises en temps réel par Spark.
+    columns:
+      - name: alert_id
+        description: Identifiant stable de l'alerte, calculé à partir de la règle, de la carte et des preuves.
+        data_tests: [unique, not_null]
+      - name: rule
+        description: Règle déclenchée.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [R1_BURST, R2_AMOUNT_SPIKE, R3_IMPOSSIBLE_TRAVEL, R4_RISKY_NIGHT]
+      - name: card_hash
+        description: Carte concernée (empreinte).
+        config:
+          meta: {pii: true}
+        data_tests: [not_null]
+      - name: score
+        description: Score de risque, de 0 à 100.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+      - name: level
+        description: "Niveau de risque : LOW (moins de 50), MEDIUM (50 à 69), HIGH (70 et plus)."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [LOW, MEDIUM, HIGH]
+      - name: transaction_id
+        description: Transaction en cause, pour les règles qui jugent une transaction seule (R2, R4).
+      - name: first_event_time
+        description: Première transaction en cause.
+      - name: last_event_time
+        description: Dernière transaction en cause.
+      - name: window_start
+        description: Début de la fenêtre de temps, pour les règles sur une fenêtre (R1, R3).
+      - name: window_end
+        description: Fin de la fenêtre de temps.
+      - name: evidence
+        description: Preuves au format JSON. Leur forme dépend de la règle.
+      - name: detected_at
+        description: Heure d'émission de l'alerte.
+      - name: alert_date
+        description: Jour de la première transaction en cause.
+
+  - name: stg_customers
+    description: Clients de la banque.
+    columns:
+      - name: customer_id
+        description: Identifiant du client.
+        data_tests: [unique, not_null]
+      - name: full_name
+        description: Nom complet.
+        config:
+          meta: {pii: true}
+      - name: email
+        description: Adresse e-mail.
+        config:
+          meta: {pii: true}
+      - name: home_country
+        description: Pays de résidence.
+      - name: usual_amount_eur
+        description: Montant habituel d'un achat du client, en euros. Sert à la règle R2.
+
+  - name: stg_merchants
+    description: Commerçants acceptant la carte.
+    columns:
+      - name: merchant_id
+        description: Identifiant du commerçant.
+        data_tests: [unique, not_null]
+      - name: merchant_name
+        description: Raison sociale.
+      - name: mcc
+        description: Catégorie du commerçant.
+      - name: category
+        description: Libellé de la catégorie.
+      - name: merchant_country
+        description: Pays du commerçant.
+      - name: is_risky
+        description: Commerçant jugé à risque par la banque (jeux d'argent, crypto-actifs, transfert d'argent...). Sert à la règle R4.

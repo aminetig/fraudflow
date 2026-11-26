@@ -1,0 +1,84 @@
+{
+  "uid": "fraudflow-fraud",
+  "title": "FraudFlow – Fraude",
+  "tags": ["fraudflow"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-3h", "to": "now"},
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Alertes émises sur la dernière heure",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 0},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT COALESCE(sum(alerts), 0) AS alertes FROM ops.alert_metrics WHERE recorded_at > now() - interval '1 hour'"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Montant à risque, dernier jour chargé",
+      "description": "Somme des transactions couvertes par une alerte.",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 0},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT COALESCE(sum(amount_at_risk_eur), 0) AS montant FROM marts.mart_fraud_daily WHERE event_date = (SELECT max(event_date) FROM marts.mart_fraud_daily)"}],
+      "fieldConfig": {"defaults": {"unit": "currencyEUR", "decimals": 0}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "stat",
+      "title": "Part des transactions signalées, dernier jour chargé",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT 100.0 * sum(alerted_transactions) / NULLIF(sum(transactions), 0) AS part FROM marts.mart_fraud_daily WHERE event_date = (SELECT max(event_date) FROM marts.mart_fraud_daily)"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 2}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Alertes par minute, par règle (temps réel)",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 4},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT date_trunc('minute', recorded_at) AS time, rule AS metric, sum(alerts) AS value FROM ops.alert_metrics WHERE $__timeFilter(recorded_at) GROUP BY 1, 2 ORDER BY 1"}],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 80, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}}
+    },
+    {
+      "type": "table",
+      "title": "Commerçants les plus signalés",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 13},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT risk_rank AS \"rang\", merchant_name AS \"commerçant\", category AS \"catégorie\", merchant_country AS \"pays\", alerted_transactions AS \"transactions signalées\", round(amount_at_risk_eur, 0) AS \"montant à risque (€)\" FROM marts.mart_merchant_risk ORDER BY risk_rank LIMIT 10"}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+    {
+      "type": "table",
+      "title": "Cartes au score combiné le plus élevé",
+      "description": "Score combiné : somme des scores des alertes d'une carte sur une journée, plafonnée à 100.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 13},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT '**** ' || card_last4 AS \"carte\", alert_date AS \"journée\", rules AS \"règles\", combined_score AS \"score\", combined_level AS \"niveau\" FROM marts.mart_card_risk_daily ORDER BY combined_score DESC, alerts DESC LIMIT 10"}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+    {
+      "type": "barchart",
+      "title": "Montant à risque par canal, dernier jour chargé",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 22},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "warehouse"},
+      "targets": [{"refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT channel AS canal, round(sum(amount_at_risk_eur), 0) AS \"montant à risque\" FROM marts.mart_fraud_daily WHERE event_date = (SELECT max(event_date) FROM marts.mart_fraud_daily) GROUP BY channel ORDER BY 2 DESC"}],
+      "fieldConfig": {"defaults": {"unit": "currencyEUR"}, "overrides": []},
+      "options": {"orientation": "horizontal", "legend": {"showLegend": false}}
+    }
+  ]
+}

@@ -1,0 +1,277 @@
+services:
+  kafka:
+    image: apache/kafka:4.1.0
+    ports:
+      - "29092:29092"
+    environment:
+      # Mode KRaft : ce nœud stocke les messages (broker) et gère le cluster (controller)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # Les portes d'entrée : conteneurs, ta machine, gestion interne du cluster
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Un seul broker : une seule copie possible des données internes de Kafka
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      # Une faute de frappe dans un nom de topic doit échouer, pas créer un topic
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+      # Limite la mémoire de Java (1 Go par défaut), car ta machine est juste
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  # Crée les topics au démarrage, puis s'arrête
+  kafka-init:
+    image: apache/kafka:4.1.0
+    depends_on:
+      - kafka
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list > /dev/null 2>&1; do
+          echo "En attente de Kafka..."
+          sleep 3
+        done
+        # 3 partitions ; messages gardés 3 jours, car le data lake sert d'archive
+        for topic in transactions.raw fraud.alerts; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+            --topic $$topic --partitions 3 --replication-factor 1 \
+            --config retention.ms=259200000
+        done
+        echo "Topics prêts."
+
+  # Entrepôt de données (base warehouse) et métadonnées d'Airflow (base airflow)
+  postgres:
+    image: postgres:17.11
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?définis POSTGRES_USER dans le fichier .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définis POSTGRES_PASSWORD dans le fichier .env}
+      POSTGRES_DB: warehouse
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d warehouse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Base NoSQL des alertes de fraude : un document par alerte
+  mongo:
+    image: mongo:8.3.13
+    # Cache limité à 256 Mo : par défaut, MongoDB prend la moitié de la mémoire
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?définis MONGO_USER dans le fichier .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?définis MONGO_PASSWORD dans le fichier .env}
+    volumes:
+      - mongo-data:/data/db
+      - ./infra/mongo:/scripts:ro
+
+  # Écrit le référentiel (clients, commerçants) dans PostgreSQL, puis s'arrête
+  referential-init:
+    image: fraudflow/generator  # construite par le service generator
+    pull_policy: never
+    command: ["python", "load_referential.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  # Simule les paiements par carte et les envoie dans Kafka
+  generator:
+    image: fraudflow/generator
+    build: ./generator
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      referential-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: transactions.raw
+      GENERATOR_RATE: ${GENERATOR_RATE:-10}
+    restart: on-failure
+
+  # Stockage objet compatible S3 : le data lake. Console web : http://localhost:9001
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?définis MINIO_ROOT_USER dans le fichier .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?définis MINIO_ROOT_PASSWORD dans le fichier .env}
+      # Adresse du stockage pour l'outil mc, utilisé par `make lake`
+      MC_HOST_lake: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@localhost:9000
+      # MinIO est écrit en Go : on demande au ramasse-miettes de rester sous 256 Mo
+      GOMEMLIMIT: 256MiB
+    volumes:
+      - minio-data:/data
+
+  # Crée les buckets du data lake, puis s'arrête
+  minio-init:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    depends_on:
+      - minio
+    environment:
+      MC_HOST_lake: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc ls lake > /dev/null 2>&1; do
+          echo "En attente de MinIO..."
+          sleep 2
+        done
+        mc mb --ignore-existing lake/bronze lake/silver lake/gold
+        echo "Buckets prêts."
+
+  # Traitements Spark en continu : Kafka -> bronze -> silver, et détection de fraude.
+  # Interface : http://localhost:4040
+  spark-streaming:
+    image: fraudflow/spark
+    build: ./spark
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      referential-init:
+        condition: service_completed_successfully
+      mongo:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: transactions.raw
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      CARD_HASH_SALT: ${CARD_HASH_SALT:?définis CARD_HASH_SALT dans le fichier .env}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      SPARK_MASTER: local[3]
+      SPARK_DRIVER_MEMORY: 1g
+    ports:
+      - "4040:4040"
+    volumes:
+      - spark-checkpoints:/checkpoints
+    restart: on-failure
+
+  # Tableaux de bord et alerte d'arrêt du flux : http://localhost:3000
+  grafana:
+    image: grafana/grafana:13.3.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?définis GRAFANA_ADMIN_PASSWORD dans le fichier .env}
+      # Consultation sans compte ; il faut se connecter (admin) pour modifier
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_LANGUAGE: fr-FR
+      # Grafana est écrit en Go : on demande au ramasse-miettes de rester sous 256 Mo
+      GOMEMLIMIT: 256MiB
+      # Lus par le fichier de provisioning de la source de données
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  # Orchestrateur du traitement quotidien : http://localhost:8081
+  # Optionnel (make batch) : c'est le service le plus gourmand en mémoire
+  airflow:
+    image: apache/airflow:3.3.2-python3.11
+    profiles: ["batch"]
+    command: standalone
+    # Groupe 0 : accès au socket Docker, pour lancer les conteneurs Spark et dbt
+    user: "50000:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      # Poste de développement : pas de connexion à l'interface. Jamais en production
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+      # Économie de mémoire : un seul processus web et un seul analyseur de DAG
+      AIRFLOW__API__WORKERS: "1"
+      AIRFLOW__DAG_PROCESSOR__PARSING_PROCESSES: "1"
+      AIRFLOW__CORE__PARALLELISM: "4"
+      AIRFLOW_CONN_WAREHOUSE: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/warehouse
+      # Transmis par le DAG aux conteneurs Spark et dbt
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      CARD_HASH_SALT: ${CARD_HASH_SALT}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - airflow-logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Transformations SQL de l'entrepôt. Lancé par Airflow, ou à la main avec make dbt
+  dbt:
+    image: fraudflow/dbt
+    build: ./dbt
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8082:8080"  # documentation : make dbt-docs
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  # Interface web pour voir les topics et les messages : http://localhost:8080
+  # Optionnelle (make ui), pour économiser la mémoire quand Spark tourne
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.5.0
+    profiles: ["ui"]
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: fraudflow
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      JAVA_OPTS: "-Xmx256m"
+
+volumes:
+  kafka-data:
+  minio-data:
+  spark-checkpoints:
+  postgres-data:
+  mongo-data:
+  grafana-data:
+  airflow-logs:

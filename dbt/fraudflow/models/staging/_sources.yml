@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Données chargées chaque jour depuis le data lake par le job Spark batch_load_warehouse.
+    schema: raw
+    config:
+      loaded_at_field: loaded_at
+      # Le chargement est quotidien : au-delà de 26 h sans nouvelle donnée, quelque chose cloche
+      freshness:
+        warn_after: {count: 26, period: hour}
+        error_after: {count: 50, period: hour}
+    tables:
+      - name: transactions
+        description: Transactions validées de la couche silver, une ligne par transaction.
+      - name: alerts
+        description: Alertes de fraude émises en temps réel, dernière version de chaque alerte.
+
+  - name: ref
+    description: Référentiel de la banque, écrit au démarrage de la plateforme.
+    schema: ref
+    tables:
+      - name: customers
+        description: Clients de la banque.
+      - name: merchants
+        description: Commerçants acceptant la carte.

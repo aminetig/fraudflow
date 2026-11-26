@@ -1,0 +1,4 @@
+customer_id,full_name,email,home_country,avg_amount_eur,loaded_at
+C00001,Camille Martin,camille.martin@example.org,FR,40.00,2026-11-08 06:00:00+00
+C00002,Louis Bernard,louis.bernard@example.org,FR,25.50,2026-11-08 06:00:00+00
+C00003,Emma Petit,emma.petit@example.org,BE,80.00,2026-11-08 06:00:00+00

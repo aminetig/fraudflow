@@ -1,0 +1,10 @@
+# Tableaux de bord chargés depuis le dépôt : ils sont versionnés comme le code
+apiVersion: 1
+providers:
+  - name: fraudflow
+    folder: FraudFlow
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
